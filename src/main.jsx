@@ -1,1 +1,1 @@
-data:text/plain;base64,aW1wb3J0IFJlYWN0LHt1c2VFZmZlY3QsdXNlTWVtbyx1c2VTdGF0ZX1mcm9tJ3JlYWN0JztpbXBvcnR7Y3JlYXRlUm9vdH1mcm9tJ3JlYWN0LWRvbS9jbGllbnQnOw==
+https://github.com/aryu0107/football-tier-news/blob/main/src/main.jsx
