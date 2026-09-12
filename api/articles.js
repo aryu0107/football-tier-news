@@ -6,22 +6,22 @@ const COUNTRY_QUERIES={
   '프랑스':'(football OR soccer) AND (Ligue 1 OR PSG OR Paris Saint-Germain OR Marseille OR Monaco)'
 };
 const LEAGUE_QUERY={'프리미어리그':'Premier League','라리가':'La Liga','세리에 A':'Serie A','리그 1':'Ligue 1'};
-const TIER_COLORS={1:'#f3c969',2:'#69d9e8',3:'#79e2ca',4:'#f0b93f',5:'#b9c4ca',6:'#b97850'};
+const TIER_COLORS={1:'#f3c969',2:'#69d9e8',3:'#f0b93f',4:'#b97850'};
 // 팬 커뮤니티의 2025~2026 신뢰도 가이드들을 종합한 보수적 기준입니다.
 // 티어는 절대적 사실 판정이 아니며, 기자의 전문 구단/국가와 기사 맥락에 따라 달라집니다.
 const JOURNALIST_RULES=[
  {tier:1,confidence:98,names:['david ornstein','paul joyce','simon stone','james pearce','arancha rodriguez','melchor ruiz','josé luis sánchez','jose luis sanchez','romeo agresti','antonio vitiello','fabrizio biasin','mohamed bouhafsi']},
  {tier:2,confidence:92,names:['fabrizio romano','matteo moretto','fabrice hawkins','sami mokbel','nizaar kinsella','matt law','alasdair gold','john percy','florian plettenberg','gianluca di marzio','alfredo pedullà','alfredo pedulla','loïc tanzi','loic tanzi','hugo guillemet','josé barroso','jose barroso','santi aouna']},
- {tier:3,confidence:82,names:['gerard romero','ben jacobs','christian falk','sam wallace','dominic king','chris bascombe','david hytner','phil mcnulty','nicolò schira','nicolo schira','luca bianchin']},
- {tier:6,confidence:25,names:['tancredi palmeri','indykaila','rudy galetti']}
+ {tier:2,confidence:82,names:['gerard romero','ben jacobs','christian falk','sam wallace','dominic king','chris bascombe','david hytner','phil mcnulty','nicolò schira','nicolo schira','luca bianchin']},
+ {tier:4,confidence:25,names:['tancredi palmeri','indykaila','rudy galetti']}
 ];
 const SOURCE_RULES=[
  {tier:1,confidence:99,names:['official club','club official','fc.com','united.com','arsenal.com','chelseafc.com','liverpoolfc.com','mancity.com','realmadrid.com','fcbarcelona.com','juventus.com','inter.it','acmilan.com','psg.fr']},
  {tier:2,confidence:93,names:['bbc sport','bbc news','the athletic','the times']},
- {tier:3,confidence:84,names:['sky sports','sky sport italia','the guardian','the telegraph','rmc sport','cope','catalunya radio','rac1','relevo']},
- {tier:4,confidence:72,names:['marca','l’equipe',"l'equipe",'le parisien','la gazzetta dello sport','gazzetta dello sport','corriere della sera','la repubblica','espn','goal.com','goal','talksport','mundo deportivo','football italia','independent']},
- {tier:5,confidence:52,names:['as.com','diario as','calciomercato','tuttomercatoweb','corriere dello sport','daily mail','the mirror','express','90min','caughtoffside','teamtalk','football insider','bleacher report','metro.co.uk','sport.es']},
- {tier:6,confidence:25,names:['the sun','daily star','tuttosport','el chiringuito','don balon','diario gol','squawka','ladbible']}
+ {tier:2,confidence:84,names:['sky sports','sky sport italia','the guardian','the telegraph','rmc sport','cope','catalunya radio','rac1','relevo']},
+ {tier:3,confidence:72,names:['marca','l’equipe',"l'equipe",'le parisien','la gazzetta dello sport','gazzetta dello sport','corriere della sera','la repubblica','espn','goal.com','goal','talksport','mundo deportivo','football italia','independent']},
+ {tier:3,confidence:52,names:['as.com','diario as','calciomercato','tuttomercatoweb','corriere dello sport','daily mail','the mirror','express','90min','caughtoffside','teamtalk','football insider','bleacher report','metro.co.uk','sport.es']},
+ {tier:4,confidence:25,names:['the sun','daily star','tuttosport','el chiringuito','don balon','diario gol','squawka','ladbible']}
 ];
 const clean=value=>(value||'').replace(/\s+/g,' ').trim();
 const normalize=value=>clean(value).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
@@ -33,7 +33,7 @@ const classifyReliability=article=>{
  if(isOfficialArticle(article.source?.name||'',article.url||'',article.title||''))return{tier:1,confidence:99,basis:'구단 공식 채널'};
  const sourceRule=findRule(`${article.source?.name||''} ${article.url||''}`,SOURCE_RULES);
  if(sourceRule)return{...sourceRule,basis:`매체 기준 · ${article.source?.name||'Unknown'}`};
- return{tier:5,confidence:55,basis:'미등록 매체 · 추가 검증 필요'};
+ return{tier:3,confidence:55,basis:'미등록 매체 · 추가 검증 필요'};
 };
 const inferCountry=text=>{
  const s=normalize(text);
