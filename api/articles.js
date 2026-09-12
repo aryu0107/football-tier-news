@@ -6,6 +6,10 @@ const COUNTRY_QUERIES={
   '프랑스':'(football OR soccer) AND (Ligue 1 OR PSG OR Paris Saint-Germain OR Marseille OR Monaco)'
 };
 const LEAGUE_QUERY={'프리미어리그':'Premier League','라리가':'La Liga','세리에 A':'Serie A','리그 1':'Ligue 1'};
+const SUPABASE_URL='https://ukubpijthorvdszqqayy.supabase.co';
+const supabaseHeaders=()=>({'apikey':process.env.SUPABASE_SERVICE_ROLE_KEY,'Authorization':`Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,'Content-Type':'application/json'});
+const readTranslationCache=async articles=>{if(!process.env.SUPABASE_SERVICE_ROLE_KEY)return new Map();const urls=articles.map(a=>a.url).filter(Boolean);if(!urls.length)return new Map();try{const response=await fetch(`${SUPABASE_URL}/rest/v1/translation_cache?select=article_url,ko_title,detailed_summary,entities&article_url=in.(${urls.map(encodeURIComponent).join(',')})`,{headers:supabaseHeaders()});if(!response.ok)return new Map();return new Map((await response.json()).map(row=>[row.article_url,row]))}catch{return new Map()}};
+const writeTranslationCache=async articles=>{if(!process.env.SUPABASE_SERVICE_ROLE_KEY)return;const rows=articles.filter(a=>a.translationStatus==='translated').map(a=>({article_url:a.url,original_title:a.title,ko_title:a.ko,detailed_summary:a.summary,entities:a.entities||[],source_name:a.source,author_name:a.author||null,published_at:a.publishedAt,model_name:'gemini-3.6-flash',updated_at:new Date().toISOString()}));if(!rows.length)return;try{await fetch(`${SUPABASE_URL}/rest/v1/translation_cache?on_conflict=article_url`,{method:'POST',headers:{...supabaseHeaders(),'Prefer':'resolution=merge-duplicates'},body:JSON.stringify(rows)})}catch{}};
 const TIER_COLORS={1:'#f3c969',2:'#69d9e8',3:'#f0b93f',4:'#b97850'};
 // 팬 커뮤니티의 2025~2026 신뢰도 가이드들을 종합한 보수적 기준입니다.
 // 티어는 절대적 사실 판정이 아니며, 기자의 전문 구단/국가와 기사 맥락에 따라 달라집니다.
@@ -69,17 +73,18 @@ export default async function handler(req,res){
  if(from>to)return res.status(400).json({error:'시작일은 종료일보다 늦을 수 없습니다.',code:'invalid_date_range'});
  if(rangeDays>31)return res.status(400).json({error:'기사량이 너무 많습니다. 날짜 범위는 최대 31일까지 선택할 수 있습니다.',code:'date_range_too_large',maxRangeDays:31});
  const page=Math.max(1,Math.min(100,Number(req.query.page)||1)),pageSize=Math.max(10,Math.min(50,Number(req.query.pageSize)||10)),mode=req.query.mode==='translate'?'translate':'feed';
- const country=COUNTRY_QUERIES[req.query.country]?req.query.country:'전체',league=LEAGUE_QUERY[req.query.league]?req.query.league:'전체',userQuery=clean(req.query.q).slice(0,100);
- const base=league==='전체'?COUNTRY_QUERIES[country]:`(football OR soccer) AND "${LEAGUE_QUERY[league]}"`,q=userQuery?`(${base}) AND (${userQuery})`:base;
+ const country=COUNTRY_QUERIES[req.query.country]?req.query.country:'전체',league=LEAGUE_QUERY[req.query.league]?req.query.league:'전체',team=clean(req.query.team).slice(0,60),selectedTier=Math.max(0,Math.min(4,Number(req.query.tier)||0)),userQuery=clean(req.query.q).slice(0,100);
+ const leagueBase=league==='전체'?COUNTRY_QUERIES[country]:`(football OR soccer) AND "${LEAGUE_QUERY[league]}"`,base=team?`(${leagueBase}) AND "${team}"`:leagueBase,q=userQuery?`(${base}) AND (${userQuery})`:base;
  const params=new URLSearchParams({q,from:from.toISOString(),to:to.toISOString(),language:'en',sortBy:'publishedAt',page:String(page),pageSize:String(pageSize)});
  try{
   const response=await fetch(`https://newsapi.org/v2/everything?${params}`,{headers:{'X-Api-Key':key}}),data=await response.json();
   if(!response.ok)return res.status(response.status).json({error:data.message||'NewsAPI 요청에 실패했습니다.',code:data.code||'newsapi_error'});
-  const articles=(data.articles||[]).filter(a=>a.url&&a.title&&a.title!=='[Removed]').map((a,index)=>{
+  let articles=(data.articles||[]).filter(a=>a.url&&a.title&&a.title!=='[Removed]').map((a,index)=>{
    const text=`${a.title||''} ${a.description||''} ${a.content||''}`;let[countryName,leagueName]=inferCountry(text);if(country!=='전체')countryName=country;if(league!=='전체')leagueName=league;
    const meta=classifyReliability(a),source=(a.source&&a.source.name)||'Unknown',author=clean(a.author);
    return{id:`${a.publishedAt}-${index}`,tier:meta.tier,source,author,country:countryName,league:leagueName,time:relativeTime(a.publishedAt),publishedAt:a.publishedAt,title:clean(a.title),ko:clean(a.title),summary:clean(a.description)||'기사 설명이 충분히 제공되지 않았습니다. 원문에서 자세한 내용을 확인하세요.',rawContent:clean(a.content),tags:[leagueName==='전체'?'축구':leagueName,author||countryName==='전체'?'해외축구':countryName].filter(Boolean),confidence:meta.confidence,tierBasis:meta.basis,color:TIER_COLORS[meta.tier],url:a.url,image:a.urlToImage||null};
   });
+  if(selectedTier)articles=articles.filter(a=>a.tier===selectedTier);
   let tierCounts={1:0,2:0,3:0,4:0};
   if(mode==='feed'){
    const sampleSize=Math.min(100,Number(data.totalResults)||0);
@@ -87,7 +92,9 @@ export default async function handler(req,res){
    const safeArticles=articles.map(({rawContent,...article})=>({...article,translationStatus:'pending'}));
    return res.status(200).json({articles:safeArticles,tierCounts,totalResults:Math.min(Number(data.totalResults)||0,5000),page,pageSize,from:from.toISOString(),to:to.toISOString(),maxRangeDays:31,tierModel:'community-consensus-2026-09'});
   }
-  const localizedArticles=await localizeArticles(articles),safeArticles=localizedArticles.map(({rawContent,...article})=>article);
-  return res.status(200).json({articles:safeArticles,totalResults:Math.min(Number(data.totalResults)||0,5000),page,pageSize,translationModel:'gemini-3.6-flash'});
+  const cache=await readTranslationCache(articles),missing=[];let localizedArticles=articles.map(article=>{const item=cache.get(article.url);if(!item){missing.push(article);return article}return{...article,ko:item.ko_title,summary:item.detailed_summary,entities:Array.isArray(item.entities)?item.entities:[],translationStatus:'translated'}});
+  if(missing.length){const translated=await localizeArticles(missing);await writeTranslationCache(translated);const translatedByUrl=new Map(translated.map(a=>[a.url,a]));localizedArticles=localizedArticles.map(a=>translatedByUrl.get(a.url)||a)}
+  const safeArticles=localizedArticles.map(({rawContent,...article})=>article);
+  return res.status(200).json({articles:safeArticles,totalResults:selectedTier?Number(tierCounts[selectedTier]||articles.length):Math.min(Number(data.totalResults)||0,5000),page,pageSize,translationModel:'gemini-3.6-flash',translationCacheHits:articles.length-missing.length});
  }catch(error){return res.status(500).json({error:'기사 서버에 연결하지 못했습니다.'});}
 }
