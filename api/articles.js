@@ -45,6 +45,7 @@ const inferCountry=text=>{
 };
 const relativeTime=date=>{const diff=Math.max(0,Date.now()-new Date(date).getTime()),minute=60000,hour=3600000,day=86400000;if(diff<hour)return`${Math.max(1,Math.floor(diff/minute))}분 전`;if(diff<day)return`${Math.floor(diff/hour)}시간 전`;return new Intl.DateTimeFormat('ko-KR',{year:'numeric',month:'short',day:'numeric'}).format(new Date(date))};
 const parseGeminiJson=text=>{const raw=clean(text).replace(/^```json\s*/i,'').replace(/```$/,'').trim();try{return JSON.parse(raw)}catch{const match=raw.match(/\[[\s\S]*\]/);return match?JSON.parse(match[0]):[]}};
+const summarizeTierCounts=articles=>articles.reduce((counts,article)=>{const tier=classifyReliability(article).tier;counts[tier]=(counts[tier]||0)+1;return counts},{1:0,2:0,3:0,4:0});
 const localizeArticles=async articles=>{
  const key=process.env.GEMINI_API_KEY;if(!key)return articles.map(a=>({...a,translationStatus:'unavailable'}));
  const payload=articles.map((a,index)=>({index,title:a.title,description:a.summary,content:a.rawContent,author:a.author,source:a.source}));
@@ -67,7 +68,7 @@ export default async function handler(req,res){
  const rangeDays=Math.floor((to.getTime()-from.getTime())/86400000)+1;
  if(from>to)return res.status(400).json({error:'시작일은 종료일보다 늦을 수 없습니다.',code:'invalid_date_range'});
  if(rangeDays>31)return res.status(400).json({error:'기사량이 너무 많습니다. 날짜 범위는 최대 31일까지 선택할 수 있습니다.',code:'date_range_too_large',maxRangeDays:31});
- const page=Math.max(1,Math.min(100,Number(req.query.page)||1)),pageSize=Math.max(10,Math.min(50,Number(req.query.pageSize)||10));
+ const page=Math.max(1,Math.min(100,Number(req.query.page)||1)),pageSize=Math.max(10,Math.min(50,Number(req.query.pageSize)||10)),mode=req.query.mode==='translate'?'translate':'feed';
  const country=COUNTRY_QUERIES[req.query.country]?req.query.country:'전체',league=LEAGUE_QUERY[req.query.league]?req.query.league:'전체',userQuery=clean(req.query.q).slice(0,100);
  const base=league==='전체'?COUNTRY_QUERIES[country]:`(football OR soccer) AND "${LEAGUE_QUERY[league]}"`,q=userQuery?`(${base}) AND (${userQuery})`:base;
  const params=new URLSearchParams({q,from:from.toISOString(),to:to.toISOString(),language:'en',sortBy:'publishedAt',page:String(page),pageSize:String(pageSize)});
@@ -79,8 +80,14 @@ export default async function handler(req,res){
    const meta=classifyReliability(a),source=(a.source&&a.source.name)||'Unknown',author=clean(a.author);
    return{id:`${a.publishedAt}-${index}`,tier:meta.tier,source,author,country:countryName,league:leagueName,time:relativeTime(a.publishedAt),publishedAt:a.publishedAt,title:clean(a.title),ko:clean(a.title),summary:clean(a.description)||'기사 설명이 충분히 제공되지 않았습니다. 원문에서 자세한 내용을 확인하세요.',rawContent:clean(a.content),tags:[leagueName==='전체'?'축구':leagueName,author||countryName==='전체'?'해외축구':countryName].filter(Boolean),confidence:meta.confidence,tierBasis:meta.basis,color:TIER_COLORS[meta.tier],url:a.url,image:a.urlToImage||null};
   });
-  const localizedArticles=await localizeArticles(articles);
-  const safeArticles=localizedArticles.map(({rawContent,...article})=>article);
-  return res.status(200).json({articles:safeArticles,totalResults:Math.min(Number(data.totalResults)||0,5000),page,pageSize,from:from.toISOString(),to:to.toISOString(),maxRangeDays:31,tierModel:'community-consensus-2026-09',translationModel:'gemini-3.6-flash'});
+  let tierCounts={1:0,2:0,3:0,4:0};
+  if(mode==='feed'){
+   const sampleSize=Math.min(100,Number(data.totalResults)||0);
+   if(sampleSize){const countParams=new URLSearchParams(params);countParams.set('page','1');countParams.set('pageSize',String(sampleSize));const countResponse=await fetch(`https://newsapi.org/v2/everything?${countParams}`,{headers:{'X-Api-Key':key}});if(countResponse.ok){const countData=await countResponse.json();const sample=(countData.articles||[]).filter(a=>a.url&&a.title&&a.title!=='[Removed]');const sampleCounts=summarizeTierCounts(sample),sampleTotal=sample.length||1,total=Math.min(Number(data.totalResults)||0,5000);tierCounts=Object.fromEntries([1,2,3,4].map(tier=>[tier,Math.round((sampleCounts[tier]||0)/sampleTotal*total)]))}}
+   const safeArticles=articles.map(({rawContent,...article})=>({...article,translationStatus:'pending'}));
+   return res.status(200).json({articles:safeArticles,tierCounts,totalResults:Math.min(Number(data.totalResults)||0,5000),page,pageSize,from:from.toISOString(),to:to.toISOString(),maxRangeDays:31,tierModel:'community-consensus-2026-09'});
+  }
+  const localizedArticles=await localizeArticles(articles),safeArticles=localizedArticles.map(({rawContent,...article})=>article);
+  return res.status(200).json({articles:safeArticles,totalResults:Math.min(Number(data.totalResults)||0,5000),page,pageSize,translationModel:'gemini-3.6-flash'});
  }catch(error){return res.status(500).json({error:'기사 서버에 연결하지 못했습니다.'});}
 }
