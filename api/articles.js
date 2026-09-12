@@ -58,12 +58,15 @@ const localizeArticles=async articles=>{
  }catch{return articles.map(a=>({...a,translationStatus:'fallback'}))}
 };
 export default async function handler(req,res){
- res.setHeader('Cache-Control','s-maxage=900, stale-while-revalidate=3600');
+ res.setHeader('Cache-Control','public, s-maxage=3600, stale-while-revalidate=86400');
  if(req.method!=='GET')return res.status(405).json({error:'Method not allowed'});
  const key=process.env.NEWS_API_KEY;if(!key)return res.status(500).json({error:'NEWS_API_KEY가 설정되지 않았습니다.'});
- const now=new Date(),oldest=new Date(now);oldest.setFullYear(now.getFullYear()-3);
- const requestedFrom=new Date(String(req.query.from||oldest.toISOString().slice(0,10))+'T00:00:00Z'),requestedTo=new Date(String(req.query.to||now.toISOString().slice(0,10))+'T23:59:59Z');
- const from=new Date(Math.max(oldest.getTime(),Number.isNaN(requestedFrom.getTime())?oldest.getTime():requestedFrom.getTime())),to=new Date(Math.min(now.getTime(),Number.isNaN(requestedTo.getTime())?now.getTime():requestedTo.getTime()));
+ const now=new Date(),defaultFrom=new Date(now);defaultFrom.setDate(now.getDate()-6);
+ const requestedFrom=new Date(String(req.query.from||defaultFrom.toISOString().slice(0,10))+'T00:00:00Z'),requestedTo=new Date(String(req.query.to||now.toISOString().slice(0,10))+'T23:59:59Z');
+ const from=Number.isNaN(requestedFrom.getTime())?defaultFrom:requestedFrom,to=new Date(Math.min(now.getTime(),Number.isNaN(requestedTo.getTime())?now.getTime():requestedTo.getTime()));
+ const rangeDays=Math.floor((to.getTime()-from.getTime())/86400000)+1;
+ if(from>to)return res.status(400).json({error:'시작일은 종료일보다 늦을 수 없습니다.',code:'invalid_date_range'});
+ if(rangeDays>31)return res.status(400).json({error:'기사량이 너무 많습니다. 날짜 범위는 최대 31일까지 선택할 수 있습니다.',code:'date_range_too_large',maxRangeDays:31});
  const page=Math.max(1,Math.min(100,Number(req.query.page)||1)),pageSize=Math.max(10,Math.min(50,Number(req.query.pageSize)||10));
  const country=COUNTRY_QUERIES[req.query.country]?req.query.country:'전체',league=LEAGUE_QUERY[req.query.league]?req.query.league:'전체',userQuery=clean(req.query.q).slice(0,100);
  const base=league==='전체'?COUNTRY_QUERIES[country]:`(football OR soccer) AND "${LEAGUE_QUERY[league]}"`,q=userQuery?`(${base}) AND (${userQuery})`:base;
@@ -78,6 +81,6 @@ export default async function handler(req,res){
   });
   const localizedArticles=await localizeArticles(articles);
   const safeArticles=localizedArticles.map(({rawContent,...article})=>article);
-  return res.status(200).json({articles:safeArticles,totalResults:Math.min(Number(data.totalResults)||0,5000),page,pageSize,from:from.toISOString(),to:to.toISOString(),requestedRangeYears:3,tierModel:'community-consensus-2026-09',translationModel:'gemini-3.6-flash'});
+  return res.status(200).json({articles:safeArticles,totalResults:Math.min(Number(data.totalResults)||0,5000),page,pageSize,from:from.toISOString(),to:to.toISOString(),maxRangeDays:31,tierModel:'community-consensus-2026-09',translationModel:'gemini-3.6-flash'});
  }catch(error){return res.status(500).json({error:'기사 서버에 연결하지 못했습니다.'});}
 }
